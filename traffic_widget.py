@@ -2,6 +2,7 @@ import os
 import time
 import threading
 import tkinter as tk
+from tkinter import messagebox
 
 # Load configuration from a .env file if present (CWD and alongside script/EXE)
 try:
@@ -185,7 +186,7 @@ class App:
         # UI
         self.root = tk.Tk()
         self.root.title("Live Traffic (AP)")
-        self.root.geometry("240x120")
+        self.root.geometry("260x170")
         self.root.resizable(False, False)
         try:
             self.root.attributes("-topmost", ALWAYS_ON_TOP)
@@ -197,21 +198,40 @@ class App:
         self.lbl_rx.pack(pady=(10, 2))
         self.lbl_tx.pack(pady=(0, 6))
 
+        # Controls row (place early so it's always visible)
+        controls = tk.Frame(self.root)
+        controls.pack()
+        self.var_topmost = tk.BooleanVar(value=ALWAYS_ON_TOP)
+        chk = tk.Checkbutton(
+            controls,
+            text="Always on top",
+            variable=self.var_topmost,
+            command=self.toggle_topmost,
+            font=("Segoe UI", 9),
+        )
+        try:
+            # Ensure text is visible on all themes
+            chk.configure(fg="#000000", bg=self.root.cget("bg"), activeforeground="#000000", activebackground=self.root.cget("bg"))
+        except Exception:
+            pass
+        chk.pack(side=tk.LEFT, padx=6)
+        self._chk_topmost = chk
+
         # Connection status dot (gray unknown, green up, red down)
         self.status_dot = tk.Canvas(self.root, width=12, height=12, highlightthickness=0, bd=0)
         self._status_item = self.status_dot.create_oval(1, 1, 11, 11, fill="#999999", outline="")
         self.status_dot.pack(pady=(0, 6))
 
-        controls = tk.Frame(self.root)
-        controls.pack()
-        self.var_topmost = tk.BooleanVar(value=ALWAYS_ON_TOP)
-        chk = tk.Checkbutton(controls, text="Always on top", variable=self.var_topmost, command=self.toggle_topmost)
-        chk.pack(side=tk.LEFT, padx=6)
+        # Connection error message (shown in red when SSH fails)
+        self.lbl_err = tk.Label(self.root, text="", font=("Segoe UI", 10), fg="#e74c3c")
+        self.lbl_err.pack(pady=(0, 4))
+
+        
 
         # Tray icon
         self.tray = None
         if HAS_TRAY:
-            self.tray = TrayManager(self.show_window, self.exit_app, on_toggle_overlay=self.toggle_overlay)
+            self.tray = TrayManager(self.show_window, self.exit_app, on_toggle_overlay=self.toggle_overlay, on_toggle_topmost=self.toggle_topmost)
             self.tray.start(title="Traffic", down_text="--", up_text="--")
 
         # Overlay (persistent until explicitly hidden)
@@ -229,6 +249,8 @@ class App:
         self.up_bps = None
         self.link_status = "unknown"
         self.stop_event = threading.Event()
+        self._error_shown = False
+        self._last_error_text = ""
 
         # Start polling thread
         self.thread = threading.Thread(target=self.poll_loop, daemon=True)
@@ -251,6 +273,7 @@ class App:
             down = self.down_bps
             up = self.up_bps
             status = self.link_status
+            last_err = self._last_error_text
         self.lbl_rx.config(text=f"Down: {format_rate_bytes_per_sec(down)}")
         self.lbl_tx.config(text=f"Up:   {format_rate_bytes_per_sec(up)}")
         # Status dot color
@@ -272,6 +295,11 @@ class App:
             pretty_status = {"up": "up", "down": "down"}.get(status, "unknown")
             if self.overlay:
                 self.overlay.set_text(dr, ur, status_text=pretty_status)
+        except Exception:
+            pass
+        # Error label
+        try:
+            self.lbl_err.config(text=last_err)
         except Exception:
             pass
 
@@ -305,6 +333,10 @@ class App:
                 status = self.monitor.read_link_status(self.iface)
                 now = time.time()
                 if rx is not None and tx is not None:
+                    # Clear any previous error state
+                    if self._last_error_text:
+                        self._last_error_text = ""
+                        self._error_shown = False
                     if self.prev is not None:
                         prx, ptx, pt = self.prev
                         dt = max(now - pt, 1e-6)
@@ -325,11 +357,20 @@ class App:
                         except Exception:
                             pass
                     self.prev = (rx, tx, now)
-            except Exception:
+            except Exception as e:
                 try:
                     self.monitor.close()
                 except Exception:
                     pass
+                # Record and notify error once
+                msg = str(e) or "SSH connection failed"
+                self._last_error_text = f"Connection failed: {msg}"
+                if not self._error_shown:
+                    try:
+                        messagebox.showerror("Connection failed", self._last_error_text)
+                    except Exception:
+                        pass
+                    self._error_shown = True
             next_time += POLL_INTERVAL
             time.sleep(max(0.0, next_time - time.perf_counter()))
 
@@ -383,10 +424,11 @@ class App:
 
 # Minimal tray manager to show live speeds and menu
 class TrayManager:
-    def __init__(self, on_show, on_exit, on_toggle_overlay=None):
+    def __init__(self, on_show, on_exit, on_toggle_overlay=None, on_toggle_topmost=None):
         self.on_show = on_show
         self.on_exit = on_exit
         self.on_toggle_overlay = on_toggle_overlay
+        self.on_toggle_topmost = on_toggle_topmost
         self.icon = None
         self._thread = None
 
@@ -411,6 +453,8 @@ class TrayManager:
         items = [pystray.MenuItem("Show", lambda: self.on_show())]
         if self.on_toggle_overlay:
             items.append(pystray.MenuItem("Toggle Overlay", lambda: self.on_toggle_overlay()))
+        if self.on_toggle_topmost:
+            items.append(pystray.MenuItem("Toggle Always On Top", lambda: self.on_toggle_topmost()))
         items.append(pystray.MenuItem("Exit", lambda: self.on_exit()))
         menu = pystray.Menu(*items)
         self.icon = pystray.Icon("traffic_widget", image, title, menu)
