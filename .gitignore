@@ -1,0 +1,25 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+venv/
+
+# Env files / secrets
+.env
+.env.*
+dist/.env
+
+# Build & dist
+build/
+dist/
+*.log
+*.spec
+overlay_pos.txt
+traffic_widget.log*
+
+# OS
+.DS_Store
+Thumbs.db

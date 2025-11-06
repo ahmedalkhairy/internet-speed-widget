@@ -1,0 +1,7 @@
+{
+  "reboot_router": "(ubus call system reboot 2>/dev/null || /sbin/reboot || busybox reboot || reboot -f || reboot) >/dev/null 2>&1",
+  "restart_ap": "(wifi reload || wifi up || /etc/init.d/network reload || /etc/init.d/hostapd restart || true) >/dev/null 2>&1",
+  "reconnect_4g": "(ip link set dev {iface} down 2>/dev/null || ifconfig {iface} down 2>/dev/null || ifdown {iface} 2>/dev/null || ifdown wan 2>/dev/null || true) && sleep 2 && (ip link set dev {iface} up 2>/dev/null || ifconfig {iface} up 2>/dev/null || ifup {iface} 2>/dev/null || ifup wan 2>/dev/null || true)",
+  "restart_network": "(/etc/init.d/network restart || systemctl restart network || true) >/dev/null 2>&1",
+  "ap_cmd_reboot": "reboot"
+}

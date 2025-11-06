@@ -1,0 +1,8 @@
+{
+  "cookies": "",
+  "headers": {"Accept": "*/*"},
+  "login_attempts": [],
+  "reboot_actions": [
+    { "method": "POST", "path": "/system_reboot" }
+  ]
+}

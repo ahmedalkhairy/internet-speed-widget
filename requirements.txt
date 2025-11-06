@@ -1,0 +1,6 @@
+paramiko>=3.0
+pystray>=0.19; platform_system == "Windows"
+pywin32>=304; platform_system == "Windows"
+Pillow>=10.0
+python-dotenv>=1.0
+requests>=2.32
