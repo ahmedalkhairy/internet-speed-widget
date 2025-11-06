@@ -14,7 +14,7 @@ dist/.env
 
 # Build & dist
 build/
-dist/
+dist/*`n!dist/TrafficWidget.exe`n!dist/.env.example
 *.log
 *.spec
 overlay_pos.txt
