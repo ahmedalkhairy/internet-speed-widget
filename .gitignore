@@ -10,6 +10,7 @@ venv/
 # Env files / secrets
 .env
 .env.*
+!.env.example
 dist/.env
 
 # Build & dist
