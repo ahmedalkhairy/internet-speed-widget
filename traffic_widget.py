@@ -3,6 +3,7 @@ import time
 import threading
 import tkinter as tk
 from tkinter import messagebox
+import fnmatch
 
 # Load configuration from a .env file if present (CWD and alongside script/EXE)
 try:
@@ -47,6 +48,10 @@ AP_PORT = int(os.getenv("AP_PORT", os.getenv("ROUTER_PORT", "22")))
 
 # Monitoring
 INTERFACE = os.getenv("INTERFACE", "auto").strip()  # "auto" picks the busiest iface on the AP
+# When monitoring from the AP's LAN perspective, the data flowing "down" to clients
+# is TX on the client-facing interface(s). Set LAN_PERSPECTIVE=1 to swap directions
+# so Down=TX and Up=RX on the chosen interface/pattern.
+LAN_PERSPECTIVE = os.getenv("LAN_PERSPECTIVE", "0") in ("1", "true", "True")
 POLL_INTERVAL = float(os.getenv("POLL_INTERVAL", "1.0"))  # seconds
 ALWAYS_ON_TOP = os.getenv("ALWAYS_ON_TOP", "0") in ("1", "true", "True")
 START_MINIMIZED = os.getenv("START_MINIMIZED", "0") in ("1", "true", "True")
@@ -186,7 +191,7 @@ class App:
         # UI
         self.root = tk.Tk()
         self.root.title("Live Traffic (AP)")
-        self.root.geometry("260x170")
+        self.root.geometry("260x150")
         self.root.resizable(False, False)
         try:
             self.root.attributes("-topmost", ALWAYS_ON_TOP)
@@ -200,7 +205,7 @@ class App:
 
         # Controls row (place early so it's always visible)
         controls = tk.Frame(self.root)
-        controls.pack()
+        controls.pack(pady=(0, 4))
         self.var_topmost = tk.BooleanVar(value=ALWAYS_ON_TOP)
         chk = tk.Checkbutton(
             controls,
@@ -327,9 +332,22 @@ class App:
                         pass
             except Exception:
                 pass
+        last_auto_check = time.monotonic()
         while not self.stop_event.is_set():
             try:
-                rx, tx = self.monitor.read_counters(self.iface)
+                # Support aggregation: if INTERFACE contains ',' or '*' then sum matching ifaces
+                aggregate = ("," in self.iface) or ("*" in self.iface) or ("?" in self.iface)
+                if aggregate:
+                    allc = self.monitor.read_all_counters()
+                    total_rx = total_tx = 0
+                    for part in [p.strip() for p in self.iface.split(",") if p.strip()]:
+                        for name, (arx, atx) in allc.items():
+                            if fnmatch.fnmatchcase(name, part):
+                                total_rx += arx
+                                total_tx += atx
+                    rx, tx = total_rx, total_tx
+                else:
+                    rx, tx = self.monitor.read_counters(self.iface)
                 status = self.monitor.read_link_status(self.iface)
                 now = time.time()
                 if rx is not None and tx is not None:
@@ -344,8 +362,13 @@ class App:
                         dtx = tx - ptx
                         if drx < 0 or dtx < 0:
                             drx = dtx = 0
-                        down_bps = drx / dt
-                        up_bps = dtx / dt
+                        # Map down/up depending on perspective
+                        if LAN_PERSPECTIVE:
+                            down_bps = dtx / dt  # AP transmits to clients
+                            up_bps = drx / dt    # AP receives from clients
+                        else:
+                            down_bps = drx / dt  # RX from WAN
+                            up_bps = dtx / dt
                         if status not in ("up", "down") and (down_bps > 0 or up_bps > 0):
                             status = "up"
                         with self.lock:
@@ -357,6 +380,33 @@ class App:
                         except Exception:
                             pass
                     self.prev = (rx, tx, now)
+
+                    # Periodic dynamic auto-detect: if speeds are very low but another iface is busy, switch
+                    if (time.monotonic() - last_auto_check) > 5.0:
+                        try:
+                            all1 = self.monitor.read_all_counters()
+                            time.sleep(0.25)
+                            all2 = self.monitor.read_all_counters()
+                            best_name = None
+                            best_delta = -1
+                            for name, (r1, t1) in all1.items():
+                                r2, t2 = all2.get(name, (r1, t1))
+                                d = max(r2 - r1, 0) + max(t2 - t1, 0)
+                                if d > best_delta:
+                                    best_delta = d
+                                    best_name = name
+                            # if current aggregate not used and observed delta is tiny while another iface busy -> switch
+                            current_delta = (drx + dtx)
+                            if not aggregate and best_name and best_delta > max(current_delta * 4, 200*1024):
+                                self.iface = best_name
+                                self.prev = None
+                                try:
+                                    self.root.after(0, lambda: self.root.title(f"Live Traffic (AP:{self.iface})"))
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+                        last_auto_check = time.monotonic()
             except Exception as e:
                 try:
                     self.monitor.close()
